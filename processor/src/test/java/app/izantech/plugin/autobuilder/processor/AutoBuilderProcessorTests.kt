@@ -99,6 +99,29 @@ class AutoBuilderProcessorTests {
             .contains(AutoBuilderErrors.TEMPLATE_EMPTY_INTERFACE.format("TestInterface"))
     }
 
+    @Test fun `WHEN interface has type parameters THEN compilation fails`() {
+        // Given
+        val code = """
+            |package com.izantech.plugin.autobuilder.test
+            |
+            |import app.izantech.plugin.autobuilder.annotation.AutoBuilder
+            |
+            |@AutoBuilder
+            |interface TestInterface<T> {
+            |    val value: T
+            |}
+        """.trimMargin()
+
+        // When
+        val compilationResult = compile(code)
+
+        // Then
+        assertThat(compilationResult.exitCode)
+            .isEqualTo(KotlinCompilation.ExitCode.COMPILATION_ERROR)
+        assertThat(compilationResult.messages)
+            .contains(AutoBuilderErrors.TEMPLATE_GENERIC_TYPE.format("TestInterface"))
+    }
+
     @Test fun `WHEN property is uninitialized THEN compilation fails`() {
         // Given
         val code = """
@@ -154,6 +177,233 @@ class AutoBuilderProcessorTests {
             |@AutoBuilder
             |interface TestInterface {
             |    @Lateinit val uninitialized: Exception
+            |}
+        """.trimMargin()
+
+        // When
+        val compilationResult = compile(code)
+
+        // Then
+        assertThat(compilationResult.exitCode)
+            .isEqualTo(KotlinCompilation.ExitCode.OK)
+    }
+    // endregion
+
+    // region Mutable Property Tests
+    @Test fun `WHEN property is mutable THEN warning is shown`() {
+        // Given
+        val code = """
+            |package com.izantech.plugin.autobuilder.test
+            |
+            |import app.izantech.plugin.autobuilder.annotation.AutoBuilder
+            |
+            |@AutoBuilder
+            |interface TestWithMutableProperty {
+            |    var mutableName: String
+            |    val immutableAge: Int
+            |}
+        """.trimMargin()
+
+        // When
+        val compilationResult = compile(code)
+
+        // Then
+        assertThat(compilationResult.exitCode)
+            .isEqualTo(KotlinCompilation.ExitCode.OK)
+        assertThat(compilationResult.messages)
+            .contains("The property 'mutableName' is declared as mutable (var)")
+            .contains("Consider using 'val' instead")
+    }
+    // endregion
+
+    // region Array Tests
+    @Test fun `WHEN model contains arrays THEN equals and hashCode work correctly`() {
+        // Given
+        val code = """
+            |package com.izantech.plugin.autobuilder.test
+            |
+            |import app.izantech.plugin.autobuilder.annotation.AutoBuilder
+            |import app.izantech.plugin.autobuilder.annotation.DefaultValue
+            |
+            |@AutoBuilder
+            |interface TestWithArrays {
+            |    val stringArray: Array<String>
+            |    val intArray: IntArray
+            |    val nullableArray: Array<String>?
+            |    val primitiveArray: FloatArray
+            |}
+            |
+            |fun main() {
+            |    val arr1 = arrayOf("a", "b", "c")
+            |    val arr2 = arrayOf("a", "b", "c")
+            |    val intArr1 = intArrayOf(1, 2, 3)
+            |    val intArr2 = intArrayOf(1, 2, 3)
+            |    val floatArr1 = floatArrayOf(1.0f, 2.0f)
+            |    val floatArr2 = floatArrayOf(1.0f, 2.0f)
+            |
+            |    val model1 = TestWithArrays {
+            |        stringArray = arr1
+            |        intArray = intArr1
+            |        nullableArray = null
+            |        primitiveArray = floatArr1
+            |    }
+            |
+            |    val model2 = TestWithArrays {
+            |        stringArray = arr2
+            |        intArray = intArr2
+            |        nullableArray = null
+            |        primitiveArray = floatArr2
+            |    }
+            |
+            |    // Test equals
+            |    require(model1 == model2) { "Models with same array contents should be equal" }
+            |
+            |    // Test hashCode
+            |    require(model1.hashCode() == model2.hashCode()) {
+            |        "Models with same array contents should have same hashCode"
+            |    }
+            |
+            |    // Test with different arrays
+            |    val model3 = TestWithArrays {
+            |        stringArray = arrayOf("x", "y")
+            |        intArray = intArrayOf(9, 8)
+            |        nullableArray = arrayOf("test")
+            |        primitiveArray = floatArrayOf(9.0f)
+            |    }
+            |
+            |    require(model1 != model3) { "Models with different array contents should not be equal" }
+            |
+            |    // Test copy with arrays
+            |    val model4 = model1.copy {
+            |        nullableArray = arrayOf("modified")
+            |    }
+            |    require(model4.nullableArray?.contentEquals(arrayOf("modified")) == true) {
+            |        "Copied model should have modified array"
+            |    }
+            |    require(model4.stringArray.contentEquals(arr1)) {
+            |        "Copied model should retain original arrays for unmodified properties"
+            |    }
+            |}
+        """.trimMargin()
+
+        // When
+        val compilationResult = compile(code)
+
+        // Then
+        assertThat(compilationResult.exitCode)
+            .isEqualTo(KotlinCompilation.ExitCode.OK)
+    }
+
+    @Test fun `WHEN model contains nullable arrays THEN null handling works correctly`() {
+        // Given
+        val code = """
+            |package com.izantech.plugin.autobuilder.test
+            |
+            |import app.izantech.plugin.autobuilder.annotation.AutoBuilder
+            |
+            |@AutoBuilder
+            |interface TestWithNullableArrays {
+            |    val nullableStringArray: Array<String>?
+            |    val nullableIntArray: IntArray?
+            |}
+            |
+            |fun main() {
+            |    // Test both nulls
+            |    val model1 = TestWithNullableArrays {
+            |        nullableStringArray = null
+            |        nullableIntArray = null
+            |    }
+            |
+            |    val model2 = TestWithNullableArrays {
+            |        nullableStringArray = null
+            |        nullableIntArray = null
+            |    }
+            |
+            |    require(model1 == model2) { "Models with both null arrays should be equal" }
+            |    require(model1.hashCode() == model2.hashCode()) {
+            |        "Models with both null arrays should have same hashCode"
+            |    }
+            |
+            |    // Test one null, one non-null
+            |    val model3 = TestWithNullableArrays {
+            |        nullableStringArray = arrayOf("test")
+            |        nullableIntArray = null
+            |    }
+            |
+            |    require(model1 != model3) { "Models with different null states should not be equal" }
+            |
+            |    // Test non-null arrays
+            |    val model4 = TestWithNullableArrays {
+            |        nullableStringArray = arrayOf("a", "b")
+            |        nullableIntArray = intArrayOf(1, 2)
+            |    }
+            |
+            |    val model5 = TestWithNullableArrays {
+            |        nullableStringArray = arrayOf("a", "b")
+            |        nullableIntArray = intArrayOf(1, 2)
+            |    }
+            |
+            |    require(model4 == model5) { "Models with same non-null arrays should be equal" }
+            |    require(model4.hashCode() == model5.hashCode()) {
+            |        "Models with same non-null arrays should have same hashCode"
+            |    }
+            |}
+        """.trimMargin()
+
+        // When
+        val compilationResult = compile(code)
+
+        // Then
+        assertThat(compilationResult.exitCode)
+            .isEqualTo(KotlinCompilation.ExitCode.OK)
+    }
+
+    @Test fun `WHEN model contains all primitive array types THEN they work correctly`() {
+        // Given
+        val code = """
+            |package com.izantech.plugin.autobuilder.test
+            |
+            |import app.izantech.plugin.autobuilder.annotation.AutoBuilder
+            |
+            |@AutoBuilder
+            |interface TestAllPrimitiveArrays {
+            |    val intArray: IntArray
+            |    val longArray: LongArray
+            |    val floatArray: FloatArray
+            |    val doubleArray: DoubleArray
+            |    val booleanArray: BooleanArray
+            |    val byteArray: ByteArray
+            |    val shortArray: ShortArray
+            |    val charArray: CharArray
+            |}
+            |
+            |fun main() {
+            |    val model1 = TestAllPrimitiveArrays {
+            |        intArray = intArrayOf(1, 2, 3)
+            |        longArray = longArrayOf(1L, 2L, 3L)
+            |        floatArray = floatArrayOf(1.0f, 2.0f)
+            |        doubleArray = doubleArrayOf(1.0, 2.0)
+            |        booleanArray = booleanArrayOf(true, false)
+            |        byteArray = byteArrayOf(1, 2, 3)
+            |        shortArray = shortArrayOf(1, 2, 3)
+            |        charArray = charArrayOf('a', 'b', 'c')
+            |    }
+            |
+            |    val model2 = TestAllPrimitiveArrays {
+            |        intArray = intArrayOf(1, 2, 3)
+            |        longArray = longArrayOf(1L, 2L, 3L)
+            |        floatArray = floatArrayOf(1.0f, 2.0f)
+            |        doubleArray = doubleArrayOf(1.0, 2.0)
+            |        booleanArray = booleanArrayOf(true, false)
+            |        byteArray = byteArrayOf(1, 2, 3)
+            |        shortArray = shortArrayOf(1, 2, 3)
+            |        charArray = charArrayOf('a', 'b', 'c')
+            |    }
+            |
+            |    require(model1 == model2) { "Models with same primitive arrays should be equal" }
+            |    require(model1.hashCode() == model2.hashCode()) {
+            |        "Models with same primitive arrays should have same hashCode"
+            |    }
             |}
         """.trimMargin()
 

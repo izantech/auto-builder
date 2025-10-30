@@ -24,7 +24,30 @@ annotation class DefaultValue
 annotation class Lateinit
 
 /**
- * This annotation is used to force the use of the builder setter instead of the property itself.
+ * This annotation is used to force the use of the builder setter method instead of direct property assignment
+ * in the builder DSL.
+ *
+ * When applied to a property, the property becomes private in the builder and you must use the
+ * setPropertyName() method instead of direct assignment.
+ *
+ * Example:
+ * ```kotlin
+ * @AutoBuilder
+ * interface Interaction {
+ *     @UseBuilderSetter
+ *     val onClick: () -> Unit
+ *         @DefaultValue get() = {}
+ * }
+ *
+ * // Usage:
+ * val interaction = Interaction {
+ *     // onClick = {} // This will not compile - property is private
+ *     setOnClick { println("Clicked!") } // Must use this instead
+ * }
+ * ```
+ *
+ * This is useful for properties where you want to enforce a specific setter method,
+ * particularly for lambda properties or when you need custom setter logic.
  */
 @Target(AnnotationTarget.PROPERTY)
 annotation class UseBuilderSetter

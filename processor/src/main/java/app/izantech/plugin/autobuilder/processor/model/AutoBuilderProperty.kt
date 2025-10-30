@@ -34,6 +34,11 @@ internal class AutoBuilderProperty private constructor(
         fun from(declaration: KSPropertyDeclaration): AutoBuilderProperty? {
             if (!declaration.isPublic()) return null
 
+            // Warn about mutable properties
+            if (declaration.isMutable) {
+                warn(AutoBuilderErrors.mutableProperty(declaration), declaration)
+            }
+
             val resolvedType = declaration.type.resolve()
             val defaultValue = resolvedType.defaultValueOrNull
             val isLateinit = declaration.annotationOrNull<Lateinit>() != null

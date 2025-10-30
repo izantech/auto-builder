@@ -97,6 +97,7 @@ internal class ModelGenerator(
                         .addAnnotations(property.annotations)
                 }
             }
+            .mutable(property.isMutable)  // Preserve mutability from interface
             .addModifiers(KModifier.OVERRIDE)
             .build()
     }
@@ -160,13 +161,34 @@ internal class ModelGenerator(
             .build()
     }
 
-    private fun generateImplementationHashCode(properties: ModelProperties): FunSpec {
-        val args = properties.prettyPrint { "${it.name}," }
+    private fun generateImplementationHashCode(properties: ModelProperties): FunSpec = with(resolver) {
         val javaHash = ClassName("java.util", "Objects").member("hash")
+
+        // Build the hash arguments, handling arrays specially
+        val hashArgs = properties.joinToString(",\n    ") { prop ->
+            when {
+                prop.resolvedType.isArray -> {
+                    // For arrays, use contentHashCode() to properly hash the contents
+                    if (prop.typeName.isNullable) {
+                        "${prop.name}?.contentHashCode() ?: 0"
+                    } else {
+                        "${prop.name}.contentHashCode()"
+                    }
+                }
+                else -> prop.name
+            }
+        }
+
         return FunSpec.builder("hashCode")
             .addModifiers(KModifier.OVERRIDE)
             .returns(Int::class)
-            .addStatement("return \n  %M(%L)", javaHash, args)
+            .apply {
+                if (properties.isEmpty()) {
+                    addStatement("return 0")
+                } else {
+                    addStatement("return %M(\n    %L\n)", javaHash, hashArgs)
+                }
+            }
             .build()
     }
 
@@ -253,6 +275,7 @@ internal class ModelGenerator(
             .mutable()
             .runIf(property.useBuilderSetter) {
                 addModifiers(KModifier.PRIVATE)
+                addKdoc("Use set%L() method to set this property.", property.name.replaceFirstChar { it.uppercase() })
             }
             .let {
                 if (!isLateinit && hasDefaultValue) {

@@ -30,6 +30,12 @@ internal class AutoBuilderClass private constructor(
     companion object {
         context(Resolver, KSPLogger)
         fun from(symbol: KSClassDeclaration): AutoBuilderClass? {
+            // Check if the interface has type parameters (generics)
+            if (symbol.typeParameters.isNotEmpty()) {
+                error(AutoBuilderErrors.hasGenericType(symbol), symbol)
+                return null
+            }
+
             // Check if the interface has properties.
             val modelAnnotation = symbol.autoBuilderAnnotation
             val properties = symbol.getProperties(
