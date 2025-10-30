@@ -173,7 +173,7 @@ class AutoBuilderProcessorTests {
         messageOutputStream = System.out
 
         // KSP configuration
-        configureKsp(useKsp2 = true) {
+        configureKsp {
             symbolProcessorProviders += AutoBuilderProcessorProvider()
         }
     }.compile()

@@ -15,13 +15,15 @@ dependencies {
     testImplementation(libs.androidX.compose.runtime)
     testImplementation(libs.androidX.compose.ui)
     testImplementation(libs.test.assertj)
-    testImplementation(libs.test.junit5.api)
+    testImplementation(libs.test.junit.api)
     testImplementation(libs.test.processors.core)
     testImplementation(libs.test.processors.ksp)
-    testRuntimeOnly(libs.test.junit5.engine)
+    testImplementation(platform(libs.test.junit.bom))
+    testRuntimeOnly(libs.test.junit.platform.launcher)
+    testRuntimeOnly(libs.test.junit.engine)
 }
 
-// Configure JUnit5
+// Configure JUnit
 tasks.test {
     useJUnitPlatform()
     testLogging { events("passed", "skipped", "failed") }

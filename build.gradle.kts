@@ -11,6 +11,7 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 plugins {
     alias(libs.plugins.google.ksp)
     alias(libs.plugins.kotlin.jvm)
+    alias(libs.plugins.gradle.versions)
     alias(libs.plugins.maven.publish) apply false
 }
 

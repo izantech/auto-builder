@@ -1,7 +1,6 @@
 <component name="ProjectRunConfigurationManager">
   <configuration default="false" name="Sample | Java" type="Application" factoryName="Application">
     <option name="ALTERNATIVE_JRE_PATH" value="azul-17" />
-    <option name="ALTERNATIVE_JRE_PATH_ENABLED" value="true" />
     <option name="MAIN_CLASS_NAME" value="app.izantech.plugin.autobuilder.sample.ModelProcessorSampleJava" />
     <module name="auto-builder.sample.main" />
     <extension name="coverage">

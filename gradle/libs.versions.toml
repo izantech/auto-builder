@@ -1,17 +1,19 @@
 [versions]
 androidX-annotations = "1.9.1"
-compose = "2025.03.00"
-kotlin = "2.1.10"
-kotlinpoet = "2.1.0"
-ksp = "2.1.10-1.0.31"
-maven-publish = "0.31.0"
+compose = "2025.10.01"
+gradle-versions = "0.53.0"
+kotlin = "2.2.21"
+kotlinpoet = "2.2.0"
+ksp = "2.3.0"
+maven-publish = "0.34.0"
 
 # Testing
 test-assertj = "3.27.2"
-test-junit5 = "5.8.1"
-test-processors = "0.7.0"
+test-junit5 = "6.0.0"
+test-processors = "0.11.0"
 
 [plugins]
+gradle-versions = { id = "com.github.ben-manes.versions", version.ref = "gradle-versions" }
 google-ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 maven-publish = { id = "com.vanniktech.maven.publish", version.ref = "maven-publish" }
@@ -27,8 +29,10 @@ kotlinpoet-ksp = { module = "com.squareup:kotlinpoet-ksp", version.ref = "kotlin
 
 # Testing
 test-assertj = { module = "org.assertj:assertj-core", version.ref = "test-assertj" }
-test-junit5-api = { module = "org.junit.jupiter:junit-jupiter-api", version.ref = "test-junit5" }
-test-junit5-engine = { module = "org.junit.jupiter:junit-jupiter-engine", version.ref = "test-junit5" }
+test-junit-bom = { module = "org.junit:junit-bom", version.ref = "test-junit5" }
+test-junit-api = { group = "org.junit.jupiter", name = "junit-jupiter-api" }
+test-junit-engine = { group = "org.junit.jupiter", name = "junit-jupiter-engine" }
+test-junit-platform-launcher = { group = "org.junit.platform", name = "junit-platform-launcher" }
 test-processors-core = { module = "dev.zacsweers.kctfork:core", version.ref = "test-processors" }
 test-processors-ksp = { module = "dev.zacsweers.kctfork:ksp", version.ref = "test-processors" }
 
