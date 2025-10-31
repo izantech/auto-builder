@@ -359,6 +359,66 @@ class AutoBuilderProcessorTests {
             .isEqualTo(KotlinCompilation.ExitCode.OK)
     }
 
+    // region Custom Default Resolution Tests (Baseline Phase 1)
+    @Test fun `WHEN custom default references other properties THEN resolution succeeds`() {
+        val code = """
+            |package com.izantech.plugin.autobuilder.test
+            |
+            |import app.izantech.plugin.autobuilder.annotation.AutoBuilder
+            |import app.izantech.plugin.autobuilder.annotation.DefaultValue
+            |
+            |@AutoBuilder
+            |interface CrossDefaultsModel {
+            |    val base: Int
+            |    val plusFive: Int
+            |        @DefaultValue get() = base + 5
+            |    val doubled: Int
+            |        @DefaultValue get() = plusFive * 2
+            |}
+            |
+            |fun main() {
+            |    val model = CrossDefaultsModel { base = 10 }
+            |    require(model.base == 10)
+            |    require(model.plusFive == 15)
+            |    require(model.doubled == 30)
+            |}
+        """.trimMargin()
+
+        val compilationResult = compile(code)
+        assertThat(compilationResult.exitCode).isEqualTo(KotlinCompilation.ExitCode.OK)
+    }
+
+    @Test fun `WHEN custom defaults form a cycle THEN compilation succeeds (runtime would throw)`() {
+        val code = """
+            |package com.izantech.plugin.autobuilder.test
+            |
+            |import app.izantech.plugin.autobuilder.annotation.AutoBuilder
+            |import app.izantech.plugin.autobuilder.annotation.DefaultValue
+            |
+            |@AutoBuilder
+            |interface CyclicDefaultsModel {
+            |    val first: Int
+            |        @DefaultValue get() = second
+            |    val second: Int
+            |        @DefaultValue get() = first
+            |}
+            |
+            |// NOTE: compile-testing doesn't execute main. This validates code generation only.
+            |fun main() {
+            |    try {
+            |        CyclicDefaultsModel {}
+            |        error("Cycle should have thrown if executed")
+            |    } catch (e: IllegalStateException) {
+            |        require(e.message?.contains("Circular property default detected") == true)
+            |    }
+            |}
+        """.trimMargin()
+
+        val compilationResult = compile(code)
+        assertThat(compilationResult.exitCode).isEqualTo(KotlinCompilation.ExitCode.OK)
+    }
+    // endregion
+
     @Test fun `WHEN model contains all primitive array types THEN they work correctly`() {
         // Given
         val code = """
