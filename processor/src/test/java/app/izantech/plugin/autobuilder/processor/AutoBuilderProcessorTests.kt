@@ -6,6 +6,7 @@ import com.tschuchort.compiletesting.KotlinCompilation
 import com.tschuchort.compiletesting.SourceFile
 import com.tschuchort.compiletesting.configureKsp
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatCode
 import org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -358,6 +359,66 @@ class AutoBuilderProcessorTests {
             .isEqualTo(KotlinCompilation.ExitCode.OK)
     }
 
+    // region Custom Default Resolution Tests (Baseline Phase 1)
+    @Test fun `WHEN custom default references other properties THEN resolution succeeds`() {
+        val code = """
+            |package com.izantech.plugin.autobuilder.test
+            |
+            |import app.izantech.plugin.autobuilder.annotation.AutoBuilder
+            |import app.izantech.plugin.autobuilder.annotation.DefaultValue
+            |
+            |@AutoBuilder
+            |interface CrossDefaultsModel {
+            |    val base: Int
+            |    val plusFive: Int
+            |        @DefaultValue get() = base + 5
+            |    val doubled: Int
+            |        @DefaultValue get() = plusFive * 2
+            |}
+            |
+            |fun main() {
+            |    val model = CrossDefaultsModel { base = 10 }
+            |    require(model.base == 10)
+            |    require(model.plusFive == 15)
+            |    require(model.doubled == 30)
+            |}
+        """.trimMargin()
+
+        val compilationResult = compile(code)
+        assertThat(compilationResult.exitCode).isEqualTo(KotlinCompilation.ExitCode.OK)
+    }
+
+    @Test fun `WHEN custom defaults form a cycle THEN compilation succeeds (runtime would throw)`() {
+        val code = """
+            |package com.izantech.plugin.autobuilder.test
+            |
+            |import app.izantech.plugin.autobuilder.annotation.AutoBuilder
+            |import app.izantech.plugin.autobuilder.annotation.DefaultValue
+            |
+            |@AutoBuilder
+            |interface CyclicDefaultsModel {
+            |    val first: Int
+            |        @DefaultValue get() = second
+            |    val second: Int
+            |        @DefaultValue get() = first
+            |}
+            |
+            |// NOTE: compile-testing doesn't execute main. This validates code generation only.
+            |fun main() {
+            |    try {
+            |        CyclicDefaultsModel {}
+            |        error("Cycle should have thrown if executed")
+            |    } catch (e: IllegalStateException) {
+            |        require(e.message?.contains("Circular property default detected") == true)
+            |    }
+            |}
+        """.trimMargin()
+
+        val compilationResult = compile(code)
+        assertThat(compilationResult.exitCode).isEqualTo(KotlinCompilation.ExitCode.OK)
+    }
+    // endregion
+
     @Test fun `WHEN model contains all primitive array types THEN they work correctly`() {
         // Given
         val code = """
@@ -404,6 +465,87 @@ class AutoBuilderProcessorTests {
             |    require(model1.hashCode() == model2.hashCode()) {
             |        "Models with same primitive arrays should have same hashCode"
             |    }
+            |}
+        """.trimMargin()
+
+        // When
+        val compilationResult = compile(code)
+
+        // Then
+        assertThat(compilationResult.exitCode)
+            .isEqualTo(KotlinCompilation.ExitCode.OK)
+    }
+
+    @Test fun `WHEN property with DefaultValue references other properties THEN uses builder values`() {
+        // Given
+        val code = """
+            |package com.izantech.plugin.autobuilder.test
+            |
+            |import app.izantech.plugin.autobuilder.annotation.AutoBuilder
+            |import app.izantech.plugin.autobuilder.annotation.DefaultValue
+            |
+            |fun testPropertyInterdependencies() {
+            |    // Test case 1: Property with custom default that references another property
+            |    val interaction1 = PropertyInterdependency {
+            |        prefix = "TEST: "
+            |    }
+            |    require(interaction1.formattedMessage?.invoke("Hello") == "TEST: Hello") {
+            |        "Property with custom default should use builder value: got '${"$"}{interaction1.formattedMessage?.invoke("Hello")}'"
+            |    }
+            |
+            |    // Test case 2: Property with custom default when referenced property is not set
+            |    val interaction2 = PropertyInterdependency()
+            |    require(interaction2.formattedMessage?.invoke("Hello") == "Default: Hello") {
+            |        "Property with custom default should use default value when not set: got '${"$"}{interaction2.formattedMessage?.invoke("Hello")}'"
+            |    }
+            |
+            |    // Test case 3: Chained property dependencies
+            |    val chained = ChainedDependencies {
+            |        base = 10
+            |    }
+            |    require(chained.doubled == 20) {
+            |        "Chained property should double the base value: got '${"$"}{chained.doubled}'"
+            |    }
+            |    require(chained.quadrupled == 40) {
+            |        "Chained property should quadruple the base value: got '${"$"}{chained.quadrupled}'"
+            |    }
+            |
+            |    // Test case 4: Multiple property references
+            |    val multi = MultiPropertyReference {
+            |        firstName = "John"
+            |        lastName = "Doe"
+            |    }
+            |    require(multi.fullName == "John Doe") {
+            |        "Full name should combine first and last names: got '${"$"}{multi.fullName}'"
+            |    }
+            |}
+            |
+            |@AutoBuilder
+            |interface PropertyInterdependency {
+            |    val prefix: String?
+            |    val formattedMessage: ((String) -> String)?
+            |        @DefaultValue get() = { message ->
+            |            val p = prefix ?: "Default: "
+            |            p + message
+            |        }
+            |}
+            |
+            |@AutoBuilder
+            |interface ChainedDependencies {
+            |    val base: Int
+            |        @DefaultValue get() = 5
+            |    val doubled: Int
+            |        @DefaultValue get() = base * 2
+            |    val quadrupled: Int
+            |        @DefaultValue get() = doubled * 2
+            |}
+            |
+            |@AutoBuilder
+            |interface MultiPropertyReference {
+            |    val firstName: String?
+            |    val lastName: String?
+            |    val fullName: String
+            |        @DefaultValue get() = listOfNotNull(firstName, lastName).joinToString(" ").ifEmpty { "Unknown" }
             |}
         """.trimMargin()
 

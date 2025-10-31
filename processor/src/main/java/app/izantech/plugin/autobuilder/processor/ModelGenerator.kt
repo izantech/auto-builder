@@ -4,14 +4,7 @@ package app.izantech.plugin.autobuilder.processor
 
 import app.izantech.plugin.autobuilder.processor.model.AutoBuilderClass
 import app.izantech.plugin.autobuilder.processor.model.ModelProperties
-import app.izantech.plugin.autobuilder.processor.util.addOptionalOriginatingKSFile
-import app.izantech.plugin.autobuilder.processor.util.capitalizeCompat
-import app.izantech.plugin.autobuilder.processor.util.hidden
-import app.izantech.plugin.autobuilder.processor.util.hideFromKotlinAnnotation
-import app.izantech.plugin.autobuilder.processor.util.isArray
-import app.izantech.plugin.autobuilder.processor.util.prettyPrint
-import app.izantech.plugin.autobuilder.processor.util.runIf
-import app.izantech.plugin.autobuilder.processor.util.suppressWarnings
+import app.izantech.plugin.autobuilder.processor.util.*
 import com.google.devtools.ksp.processing.CodeGenerator
 import com.google.devtools.ksp.processing.Dependencies
 import com.google.devtools.ksp.processing.Resolver
@@ -19,19 +12,8 @@ import com.google.devtools.ksp.symbol.KSClassDeclaration
 import com.google.devtools.ksp.symbol.KSFile
 import com.google.devtools.ksp.symbol.KSNode
 import com.google.devtools.ksp.visitor.KSDefaultVisitor
-import com.squareup.kotlinpoet.ANY
-import com.squareup.kotlinpoet.ClassName
-import com.squareup.kotlinpoet.DelicateKotlinPoetApi
-import com.squareup.kotlinpoet.FileSpec
-import com.squareup.kotlinpoet.FunSpec
-import com.squareup.kotlinpoet.KModifier
-import com.squareup.kotlinpoet.LambdaTypeName
-import com.squareup.kotlinpoet.MemberName
+import com.squareup.kotlinpoet.*
 import com.squareup.kotlinpoet.MemberName.Companion.member
-import com.squareup.kotlinpoet.ParameterSpec
-import com.squareup.kotlinpoet.PropertySpec
-import com.squareup.kotlinpoet.TypeSpec
-import com.squareup.kotlinpoet.UNIT
 import com.squareup.kotlinpoet.ksp.writeTo
 
 private val SuppressedWarnings = arrayOf(
@@ -228,17 +210,6 @@ internal class ModelGenerator(
         data: AutoBuilderClass,
     ) = with(data) {
         val builderProperties = generateBuilderProperties(properties, defaultsMemberName)
-        val constructorParameters = builderProperties.prettyPrint { builderProperty ->
-            //  Builder properties can be nullable even if the symbol property is not.
-            //  This may happen when the property is annotated with @Lateinit.
-            val symbolProperty = properties.first { it.name == builderProperty.name }
-            if (symbolProperty.isLateinit) {
-                val errorMessage = AutoBuilderErrors.uninitializedLateinit(symbolProperty.source)
-                "${builderProperty.name} = ${builderProperty.name} ?: throw UninitializedPropertyAccessException(\"$errorMessage\"),"
-            } else {
-                "${builderProperty.name} = ${builderProperty.name},"
-            }
-        }
 
         TypeSpec.classBuilder(builderClassName)
             .primaryConstructor(
@@ -255,12 +226,135 @@ internal class ModelGenerator(
             .addProperties(builderProperties)
             .addFunctions(generateBuilderJavaMethods(builderClassName, properties))
             .addFunction(
-                FunSpec.builder("build")
-                    .returns(className)
-                    .addStatement("return \n  %T(%L)", implClassName, constructorParameters)
-                    .build()
+                generateBuildFunction(className, implClassName, builderClassName, properties, builderProperties, defaultsMemberName)
             )
             .addOptionalOriginatingKSFile(originatingFile)
+            .build()
+    }
+
+    private fun generateBuildFunction(
+        className: ClassName,
+        implClassName: ClassName,
+        builderClassName: ClassName,
+        properties: ModelProperties,
+        builderProperties: List<PropertySpec>,
+        defaultsMemberName: MemberName,
+    ): FunSpec {
+        return FunSpec.builder("build")
+            .returns(className)
+            .apply {
+                val hasCustomDefaults = properties.any { it.hasCustomDefaultValue }
+                if (!hasCustomDefaults) {
+                    val constructorCode = CodeBlock.builder().apply {
+                        add("return %T(\n", implClassName)
+                        indent()
+                        properties.forEach { property ->
+                            when {
+                                property.isLateinit -> {
+                                    val errorMessage = AutoBuilderErrors.uninitializedLateinit(property.source)
+                                    add("%L = %L ?: throw UninitializedPropertyAccessException(%S),\n", property.name, property.name, errorMessage)
+                                }
+                                else -> {
+                                    add("%L = %L,\n", property.name, property.name)
+                                }
+                            }
+                        }
+                        unindent()
+                        add(")\n")
+                    }.build()
+                    addCode(constructorCode)
+                } else {
+                    val builderPropertyMap = builderProperties.associateBy { it.name }
+                    val builderSimpleName = builderClassName.simpleName
+
+                    addStatement("val resolvedValues = mutableMapOf<String, Any?>()")
+                    addStatement("val resolving = mutableSetOf<String>()")
+                    addStatement("val computations = mutableMapOf<String, () -> Any?>()")
+                    addCode("@Suppress(%S)\n", "UNCHECKED_CAST")
+                    addCode("fun <T> resolve(name: String): T {\n")
+                    addCode("  val cached = resolvedValues[name]\n")
+                    addCode("  if (cached != null || resolvedValues.containsKey(name)) return cached as T\n")
+                    addCode("  if (!resolving.add(name)) {\n")
+                    addStatement("    throw IllegalStateException(%P)", "Circular property default detected for \$name")
+                    addCode("  }\n")
+                    addCode("  val value = computations.getValue(name)() as T\n")
+                    addCode("  resolving.remove(name)\n")
+                    addCode("  resolvedValues[name] = value as Any?\n")
+                    addCode("  return value\n")
+                    addCode("}\n")
+
+                    properties.forEach { property ->
+                        val builderProperty = builderPropertyMap.getValue(property.name)
+                        val builderIsNullable = builderProperty.type.isNullable
+                        val builderAccess = CodeBlock.of("this@%L.%L", builderSimpleName, property.name)
+
+                        val computation = when {
+                            property.isLateinit -> {
+                                val errorMessage = AutoBuilderErrors.uninitializedLateinit(property.source)
+                                CodeBlock.of("%L ?: throw UninitializedPropertyAccessException(%S)", builderAccess, errorMessage)
+                            }
+                            property.hasCustomDefaultValue && builderIsNullable -> {
+                                val contextBlock = CodeBlock.builder().apply {
+                                    beginControlFlow("run")
+                                    beginControlFlow("val context = object : %T", className)
+                                    properties.forEach { other ->
+                                        if (other != property) {
+                                            addStatement(
+                                                "override val %L: %T get() = resolve(%S)",
+                                                other.name,
+                                                other.typeName,
+                                                other.name,
+                                            )
+                                        }
+                                    }
+                                    endControlFlow()
+                                    addStatement("context.%L", property.name)
+                                    endControlFlow()
+                                }.build()
+                                CodeBlock.of("%L ?: %L", builderAccess, contextBlock)
+                            }
+                            property.hasCustomDefaultValue -> builderAccess
+                            builderIsNullable && property.defaultValue != null -> {
+                                CodeBlock.of("%L ?: %M.%L", builderAccess, defaultsMemberName, property.name)
+                            }
+                            else -> builderAccess
+                        }
+
+                        val lambdaBlock = CodeBlock.builder().apply {
+                            add("computations[%S] = {\n", property.name)
+                            indent()
+                            add("%L\n", computation)
+                            unindent()
+                            add("}\n")
+                        }.build()
+
+                        addCode(lambdaBlock)
+                    }
+
+                    val constructorCode = CodeBlock.builder().apply {
+                        add("return %T(\n", implClassName)
+                        indent()
+                        properties.forEach { property ->
+                            val builderProperty = builderPropertyMap.getValue(property.name)
+                            when {
+                                property.hasCustomDefaultValue -> {
+                                    add("%L = resolve(%S),\n", property.name, property.name)
+                                }
+                                property.isLateinit -> {
+                                    val errorMessage = AutoBuilderErrors.uninitializedLateinit(property.source)
+                                    add("%L = %L ?: throw UninitializedPropertyAccessException(%S),\n", property.name, builderProperty.name, errorMessage)
+                                }
+                                else -> {
+                                    add("%L = %L,\n", property.name, builderProperty.name)
+                                }
+                            }
+                        }
+                        unindent()
+                        add(")\n")
+                    }.build()
+                    addCode(constructorCode)
+                }
+            }
             .build()
     }
 
@@ -270,7 +364,9 @@ internal class ModelGenerator(
     ) = properties.map { property ->
         val isLateinit = property.isLateinit
         val hasDefaultValue = property.defaultValue != null || property.hasCustomDefaultValue
-        val typeName = property.typeName.runIf(isLateinit || !hasDefaultValue) { copy(nullable = true) }
+        // Properties with custom defaults need to be nullable in the builder since we defer evaluation
+        val needsNullableType = isLateinit || !hasDefaultValue || property.hasCustomDefaultValue
+        val typeName = property.typeName.runIf(needsNullableType) { copy(nullable = true) }
         PropertySpec.builder(property.name, typeName)
             .mutable()
             .runIf(property.useBuilderSetter) {
@@ -279,16 +375,24 @@ internal class ModelGenerator(
             }
             .let {
                 if (!isLateinit && hasDefaultValue) {
-                    val code = buildString {
-                        if (property.typeName.isNullable) {
-                            append("if (source != null) source.%L else ")
-                        } else {
-                            append("source?.%L ?: ")
+                    // For properties with custom defaults, don't evaluate them at builder initialization
+                    // They will be evaluated at build time if needed
+                    if (property.hasCustomDefaultValue) {
+                        // Only initialize from source, don't call the defaults object's getter
+                        it.initializer("source?.%L", property.name)
+                    } else {
+                        // For inferred defaults, use the existing logic
+                        val code = buildString {
+                            if (property.typeName.isNullable) {
+                                append("if (source != null) source.%L else ")
+                            } else {
+                                append("source?.%L ?: ")
+                            }
+                            append("%M.")
+                            append(property.name)
                         }
-                        append("%M.")
-                        append(property.name)
+                        it.initializer(code, property.name, defaultsMemberName)
                     }
-                    it.initializer(code, property.name, defaultsMemberName)
                 } else {
                     it.initializer("source?.%L", property.name)
                 }
