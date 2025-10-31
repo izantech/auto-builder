@@ -3,55 +3,71 @@
 Concise, project-specific guidance for AI assistants working on AutoBuilder.
 
 ## 1. Architecture & Modules
-- Multi-module Gradle project: `annotations` (public annotations), `processor` (KSP logic & generation), `sample` (usage & smoke tests of generated code).
-- Core entry: `AutoBuilderProcessor` builds models then delegates to `ModelGenerator` to emit two files per `@AutoBuilder` interface: `<Interface>.builder.kt` (impl + builder + DSL functions) and `<Interface>.defaults.kt` (default object implementing the interface).
-- Keep public API surface inside `app.izantech.plugin.autobuilder.annotation`. Processor internals remain under `app.izantech.plugin.autobuilder.processor` (plus `model` & `util`).
+- Multi-module Gradle project: `annotations` (public annotations), `processor` (KSP logic & generation), `sample` (smoke tests of generated code).
+- Flow: KSP calls `AutoBuilderProcessor` -> scans `@AutoBuilder` interfaces -> builds an internal model (`model/`) -> `ModelGenerator` emits two files per interface in KSP output: `<Interface>.builder.kt` (private Impl + public Builder + DSL creators) and `<Interface>.defaults.kt` (singleton implementing the interface with defaults).
+- Rationale: Separate annotations vs processor keeps published API lean and allows internal refactors without breaking consumers; dual-file output isolates default logic from builder ergonomics.
+- Public API strictly in `app.izantech.plugin.autobuilder.annotation`; everything else is internal (`processor/...`).
 
 ## 2. Code Generation Conventions
-- File naming is contract: do not rename `*.builder.kt` / `*.defaults.kt` patterns—tests rely on them.
-- Generated builder file sections: private `Impl`, public `Builder`, inline `@JvmSynthetic` DSL creators `Interface { ... }` and `copy`.
-- Defaults file defines singleton `<Interface>Defaults : <Interface>` assigning concrete default values (inferred + custom `@DefaultValue`).
-- Default inference list in README (e.g., primitives, collections, arrays). Extend via adjusting inference logic in `ModelGenerator` (look for when/if chains) and update README + tests.
+- File naming is contract: never rename `*.builder.kt` / `*.defaults.kt` (golden tests assert them).
+- Builder file layout (example `User.builder.kt`): `private class UserImpl(...) : User`, `public class UserBuilder(...)`, `@JvmSynthetic inline fun User { ... }`, `@JvmSynthetic inline fun User.copy { ... }`.
+- Defaults file (`User.defaults.kt`): `object UserDefaults : User { override val age = 0 ... }` mixing inferred + explicit `@DefaultValue` getters.
+- Extend inference: modify `ModelGenerator` where `when`/`if` chain decides defaults; mirror new logic in README list + add test.
 
 ## 3. Default Resolution Internals
-- Current algorithm: single `resolve(name)` with `when` dispatch, cycle detection via `resolving` set, memoization in `resolvedValues` map (see implementation in generator logic). Avoid reintroducing per-property lambda maps (legacy approach) unless feature-flagged.
-- Planned optimizations documented in `INTERNALS.md`; keep backward-compatible & optionally guard new strategies behind a Gradle property (e.g., `autobuilder.legacyResolution`).
+- Two code paths in generated `build()`:
+	1. No custom defaults -> direct constructor call, lateinit checks inline (fast path, no maps).
+	2. Custom default(s) -> emit `resolvedValues`, `resolving`, and `computations` maps plus local `resolve(name)`; context object only for nullable custom default properties with dependencies.
+- `resolve(name)` adds cycle detection (throws on recursion) and memoizes computed values; each property contributes a lambda in `computations` only when custom defaults are present.
+- Avoid side-effects in custom default getters; they may be invoked lazily through `resolve`.
+- Legacy always-lambda design deprecated; opt-in rollback may be guarded by a Gradle flag (see `INTERNALS.md`).
 
 ## 4. Adding / Modifying Features
-- Add new annotation => define in `annotations` module, expose under annotation package, then handle symbol in processor (parsing in processor model + usage in `ModelGenerator`). Update service registration if a new processor provider is introduced (`META-INF/services/com.google.devtools.ksp.processing.SymbolProcessorProvider`).
-- On structural change, adjust both emitted files + test golden outputs. Ensure Java interop (setter generation, `@JvmSynthetic` DSL) stays intact.
+- New annotation: add in `annotations/src/main/java/.../annotation`, keep package stable; parse in processor model; integrate in `ModelGenerator` emission.
+- If processor entry changes, update `processor/src/main/resources/META-INF/services/com.google.devtools.ksp.processing.SymbolProcessorProvider`.
+- Structural changes: update both generated file templates + golden test expectations + sample module regeneration.
+- Preserve Java interop: keep public setters (`setX`) on Builder + `@JvmSynthetic` for Kotlin-only DSL.
 
 ## 5. Testing Workflow
-- Run full build & tests: `./gradlew build` (JVM 17).
-- Faster processor-only cycle: `./gradlew :processor:test` (optionally `--tests "*AutoBuilderProcessorTests"`).
-- Validate generation manually: `./gradlew :sample:build` then inspect `sample/build/generated/ksp/main/kotlin/`.
-- Tests use `dev.zacsweers.kctfork` + AssertJ; add new scenario tests in `processor/src/test/java/...` with backticked descriptive names.
+- Full suite: `./gradlew build` (JVM 17 baseline).
+- Processor focus: `./gradlew :processor:test --tests "*AutoBuilderProcessorTests"` for targeted cases.
+- Manual generation check: run `./gradlew :sample:build` then inspect `sample/build/generated/ksp/main/kotlin/` for expected file names & contents.
+- Add tests: create interface in test sources + expected assertion; name tests with backticked descriptive titles.
 
 ## 6. Publishing & Versioning
-- Artifacts: `io.github.izanrodrigo:autobuilder-{annotations|processor}:<VERSION_NAME>`.
-- Bump version in `gradle.properties`. Use `./gradlew publishToMavenLocal` for local checks; `publish --no-configuration-cache` for Sonatype (ensure signing & credentials).
+- Version: bump in `gradle.properties`; snapshot vs release flows are manual.
+- Local validation: `./gradlew publishToMavenLocal` then consume in another project.
+- Release: `./gradlew publish --no-configuration-cache` (requires signing + Sonatype creds).
 
 ## 7. Style & PR Expectations
-- Kotlin official style, 4-space indent. Immutable prefs—avoid mutable collections in models/builders unless necessary.
-- Keep diagnostics centralized (`AutoBuilderErrors.kt`); extend with consistent wording & ID pattern.
-- PRs should include: summary of behavioral change, sample of new generated snippet, updated tests, commands executed (at least `./gradlew build`).
+- Kotlin official style (4 spaces); keep generated code stable (avoid unnecessary reordering—affects golden tests).
+- Prefer immutable collections; only use mutable if builder logic demands.
+- Diagnostics live in `AutoBuilderErrors.kt`; follow existing message tone & ID schema.
+- PR checklist: behavioral summary + generated snippet diff + tests updated + commands run (`./gradlew build`).
 
 ## 8. When Extending Default Inference
-1. Add type handling in generation logic.
-2. Add test interface exercising new type + expected file assertions.
-3. Update README inference list.
-4. Provide sample usage in `sample` if helpful.
+1. Add type logic in `ModelGenerator` default inference branch.
+2. Add test interface + assertion referencing emitted default.
+3. Update README list (keep ordering & formatting consistent).
+4. Optionally add sample usage in `sample` for manual verification.
 
 ## 9. Safe Change Checklist (Copy in PR)
-- [ ] Updated both builder + defaults generation paths.
-- [ ] Adjusted tests / added new coverage.
-- [ ] Regenerated sample & manually inspected.
-- [ ] No public API package leaks from processor internals.
-- [ ] README / INTERNALS updated if semantics changed.
+- [ ] Updated builder + defaults emission.
+- [ ] Adjusted/added tests (golden + behavior).
+- [ ] Regenerated sample & inspected generated sources.
+- [ ] No internal packages leaked into public API.
+- [ ] README / INTERNALS updated (if semantics changed).
 
 ## 10. Anti-Patterns to Avoid
-- Introducing reflection or runtime classpath scanning (keep compile-time deterministic).
-- Emitting unstable file names or reordering members unnecessarily (breaks golden tests).
-- Adding defaults that produce side-effects on access (keep pure & idempotent).
+- Reflection or runtime scanning (keep compile-time deterministic KSP path).
+- Unstable file names/member order (breaks golden tests & diff readability).
+- Side-effectful default getters (must be pure/idempotent).
+- Adding stateful singletons beyond the defaults object.
 
 Use this as the authoritative quick-reference; prefer updating here + AGENTS.md + README coherently when process changes.
+
+## 11. Troubleshooting Tips
+- Missing inferred default? Inspect generated `<Name>.defaults.kt` under `sample/build/generated/ksp/main/kotlin/`; if absent, extend inference in `ModelGenerator`.
+- Array property comparisons rely on `contentEquals`/`contentHashCode`; ensure custom defaults for arrays are pure to keep equality predictable.
+- Unexpected runtime error on build: check for uninitialized `@Lateinit` in thrown `UninitializedPropertyAccessException` message sourced from `AutoBuilderErrors`.
+- Cyclic custom defaults throw during `resolve(name)`; search for property names with mutually referencing getters.
