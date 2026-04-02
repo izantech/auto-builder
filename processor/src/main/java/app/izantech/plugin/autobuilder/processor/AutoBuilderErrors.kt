@@ -14,31 +14,26 @@ internal object AutoBuilderErrors {
     const val TEMPLATE_MUTABLE_PROPERTY = "The property '%s' is declared as mutable (var). AutoBuilder is designed for immutable data models. Consider using 'val' instead to ensure immutability."
     const val TEMPLATE_GENERIC_TYPE = "The interface '%s' has type parameters. AutoBuilder does not currently support generic interfaces. Please remove the type parameters."
 
-    fun notPublicInterface(declaration: KSClassDeclaration) = errorMessage(declaration) {
+    fun notPublicInterface(declaration: KSClassDeclaration) =
         TEMPLATE_NOT_PUBLIC_INTERFACE.format(declaration.simpleName.asString())
-    }
 
-    fun emptyInterface(declaration: KSClassDeclaration) = errorMessage(declaration) {
+    fun emptyInterface(declaration: KSClassDeclaration) =
         TEMPLATE_EMPTY_INTERFACE.format(declaration.simpleName.asString())
-    }
 
-    fun uninitializedProperty(declaration: KSPropertyDeclaration) = errorMessage(declaration) {
+    fun uninitializedProperty(declaration: KSPropertyDeclaration) =
         TEMPLATE_UNINITIALIZED_PROPERTY.format(declaration.simpleName.asString())
-    }
 
-    fun uninitializedLateinit(declaration: KSPropertyDeclaration) = errorMessage(declaration) {
+    fun uninitializedLateinit(declaration: KSPropertyDeclaration) = runtimeErrorMessage(declaration) {
         TEMPLATE_UNINITIALIZED_LATEINIT.format(declaration.simpleName.asString())
     }
 
-    fun mutableProperty(declaration: KSPropertyDeclaration) = errorMessage(declaration) {
+    fun mutableProperty(declaration: KSPropertyDeclaration) =
         TEMPLATE_MUTABLE_PROPERTY.format(declaration.simpleName.asString())
-    }
 
-    fun hasGenericType(declaration: KSClassDeclaration) = errorMessage(declaration) {
+    fun hasGenericType(declaration: KSClassDeclaration) =
         TEMPLATE_GENERIC_TYPE.format(declaration.simpleName.asString())
-    }
 
-    private inline fun errorMessage(declaration: KSNode, message: () -> String): String {
+    private inline fun runtimeErrorMessage(declaration: KSNode, message: () -> String): String {
         val location = declaration.location
         val errorPath = if (location is FileLocation) {
             "${declaration.containingFile?.filePath}:${location.lineNumber}"
