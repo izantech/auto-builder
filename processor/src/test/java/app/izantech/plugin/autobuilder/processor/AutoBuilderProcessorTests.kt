@@ -100,6 +100,64 @@ class AutoBuilderProcessorTests {
             .contains(AutoBuilderErrors.TEMPLATE_EMPTY_INTERFACE.format("TestInterface"))
     }
 
+    @Test fun `WHEN definition interface is empty with allowEmpty THEN compilation succeeds`() {
+        // Given
+        val code = """
+            |package com.izantech.plugin.autobuilder.test
+            |
+            |import app.izantech.plugin.autobuilder.annotation.AutoBuilder
+            |
+            |@AutoBuilder(allowEmpty = true)
+            |interface TestInterface
+        """.trimMargin()
+
+        // When
+        val compilationResult = compile(code)
+
+        // Then
+        assertThat(compilationResult.exitCode)
+            .isEqualTo(KotlinCompilation.ExitCode.OK)
+    }
+
+    @Test fun `WHEN definition interface is empty with allowEmpty THEN generates valid implementation`() {
+        // Given
+        val code = """
+            |package com.izantech.plugin.autobuilder.test
+            |
+            |import app.izantech.plugin.autobuilder.annotation.AutoBuilder
+            |
+            |@AutoBuilder(allowEmpty = true)
+            |interface EmptyConfig
+            |
+            |fun main() {
+            |    val config1 = EmptyConfig {}
+            |    val config2 = EmptyConfig {}
+            |
+            |    // equals: two empty instances should be equal
+            |    require(config1 == config2) { "Empty instances should be equal" }
+            |
+            |    // hashCode: should be 0 for empty
+            |    require(config1.hashCode() == 0) { "Empty hashCode should be 0" }
+            |
+            |    // toString: should be "EmptyConfig()"
+            |    require(config1.toString() == "EmptyConfig()") {
+            |        "toString should be EmptyConfig() but was ${"$"}{config1}"
+            |    }
+            |
+            |    // copy: should produce equal instance
+            |    val config3 = config1.copy {}
+            |    require(config1 == config3) { "Copied empty instance should be equal" }
+            |}
+        """.trimMargin()
+
+        // When
+        val compilationResult = compile(code)
+
+        // Then
+        assertThat(compilationResult.exitCode)
+            .isEqualTo(KotlinCompilation.ExitCode.OK)
+    }
+
     @Test fun `WHEN interface has type parameters THEN compilation fails`() {
         // Given
         val code = """
@@ -557,6 +615,89 @@ class AutoBuilderProcessorTests {
             .isEqualTo(KotlinCompilation.ExitCode.OK)
     }
     // endregion
+
+    // region KMP Compatibility Tests
+    @Test fun `GIVEN interface with Lateinit WHEN generated THEN uses error instead of UninitializedPropertyAccessException`() {
+        // Given
+        val code = """
+            |package com.izantech.plugin.autobuilder.test
+            |
+            |import app.izantech.plugin.autobuilder.annotation.AutoBuilder
+            |import app.izantech.plugin.autobuilder.annotation.Lateinit
+            |
+            |@AutoBuilder
+            |interface TestInterface {
+            |    @Lateinit val required: String
+            |    val name: String
+            |}
+        """.trimMargin()
+
+        // When
+        val compilationResult = compile(code)
+
+        // Then
+        assertThat(compilationResult.exitCode).isEqualTo(KotlinCompilation.ExitCode.OK)
+        val generatedSource = findGeneratedSource("TestInterface.builder.kt")
+        assertThat(generatedSource)
+            .doesNotContain("UninitializedPropertyAccessException")
+            .contains("error(")
+    }
+
+    @Test fun `GIVEN interface with properties WHEN generated THEN does not use javaClass or Objects hash`() {
+        // Given
+        val code = """
+            |package com.izantech.plugin.autobuilder.test
+            |
+            |import app.izantech.plugin.autobuilder.annotation.AutoBuilder
+            |
+            |@AutoBuilder
+            |interface TestInterface {
+            |    val name: String
+            |    val age: Int
+            |}
+        """.trimMargin()
+
+        // When
+        val compilationResult = compile(code)
+
+        // Then
+        assertThat(compilationResult.exitCode).isEqualTo(KotlinCompilation.ExitCode.OK)
+        val generatedSource = findGeneratedSource("TestInterface.builder.kt")
+        assertThat(generatedSource)
+            .doesNotContain("javaClass")
+            .doesNotContain("Objects.hash")
+            .contains("other !is")
+            .contains("result = 31 * result +")
+    }
+
+    @Test fun `GIVEN interface WHEN generated on JVM THEN includes JvmSynthetic`() {
+        // Given
+        val code = """
+            |package com.izantech.plugin.autobuilder.test
+            |
+            |import app.izantech.plugin.autobuilder.annotation.AutoBuilder
+            |
+            |@AutoBuilder
+            |interface TestInterface {
+            |    val name: String
+            |}
+        """.trimMargin()
+
+        // When
+        val compilationResult = compile(code)
+
+        // Then
+        assertThat(compilationResult.exitCode).isEqualTo(KotlinCompilation.ExitCode.OK)
+        val generatedSource = findGeneratedSource("TestInterface.builder.kt")
+        assertThat(generatedSource).contains("@JvmSynthetic")
+    }
+    // endregion
+
+    private fun findGeneratedSource(fileName: String): String {
+        val file = tempDir.walkTopDown().find { it.name == fileName }
+            ?: error("Generated file $fileName not found in $tempDir")
+        return file.readText()
+    }
 
     private fun compile(code: String) = KotlinCompilation().apply {
         sources = listOf(SourceFile.kotlin(name = "file.kt", code))

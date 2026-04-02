@@ -1,10 +1,8 @@
 package app.izantech.plugin.autobuilder.processor.model
 
 import app.izantech.plugin.autobuilder.annotation.DefaultValue
-import app.izantech.plugin.autobuilder.annotation.Lateinit
-import app.izantech.plugin.autobuilder.annotation.UseBuilderSetter
 import app.izantech.plugin.autobuilder.processor.AutoBuilderErrors
-import app.izantech.plugin.autobuilder.processor.util.annotationOrNull
+import app.izantech.plugin.autobuilder.processor.util.hasAnnotation
 import app.izantech.plugin.autobuilder.processor.util.defaultValueOrNull
 import app.izantech.plugin.autobuilder.processor.util.instanceOf
 import app.izantech.plugin.autobuilder.processor.util.toKAnnotations
@@ -30,22 +28,22 @@ internal class AutoBuilderProperty private constructor(
     val source: KSPropertyDeclaration,
 ): Comparable<AutoBuilderProperty> {
     companion object {
-        context(Resolver, KSPLogger)
+        context(resolver: Resolver, logger: KSPLogger)
         fun from(declaration: KSPropertyDeclaration): AutoBuilderProperty? {
             if (!declaration.isPublic()) return null
 
             // Warn about mutable properties
             if (declaration.isMutable) {
-                warn(AutoBuilderErrors.mutableProperty(declaration), declaration)
+                logger.warn(AutoBuilderErrors.mutableProperty(declaration), declaration)
             }
 
             val resolvedType = declaration.type.resolve()
             val defaultValue = resolvedType.defaultValueOrNull
-            val isLateinit = declaration.annotationOrNull<Lateinit>() != null
-            val useBuilderSetter = declaration.annotationOrNull<UseBuilderSetter>() != null
-            val hasCustomDefaultValue = declaration.getter?.annotationOrNull<DefaultValue>() != null
+            val isLateinit = declaration.hasAnnotation("Lateinit")
+            val useBuilderSetter = declaration.hasAnnotation("UseBuilderSetter")
+            val hasCustomDefaultValue = declaration.getter?.hasAnnotation("DefaultValue") ?: false
             if (!isLateinit && !resolvedType.isMarkedNullable && defaultValue == null && !hasCustomDefaultValue) {
-                error(AutoBuilderErrors.uninitializedProperty(declaration), declaration)
+                logger.error(AutoBuilderErrors.uninitializedProperty(declaration), declaration)
                 return null
             }
 
@@ -69,7 +67,7 @@ internal class AutoBuilderProperty private constructor(
     }
 }
 
-context(Resolver)
+context(resolver: Resolver)
 private val KSPropertyDeclaration.kAnnotations
     get() = getter
         ?.annotations

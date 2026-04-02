@@ -1,12 +1,9 @@
-@file:OptIn(KspExperimental::class)
-
 package app.izantech.plugin.autobuilder.processor.model
 
-import app.izantech.plugin.autobuilder.annotation.AutoBuilder
 import app.izantech.plugin.autobuilder.processor.AutoBuilderErrors
+import app.izantech.plugin.autobuilder.processor.util.findAnnotation
+import app.izantech.plugin.autobuilder.processor.util.getArgument
 import app.izantech.plugin.autobuilder.processor.util.toKAnnotations
-import com.google.devtools.ksp.KspExperimental
-import com.google.devtools.ksp.getAnnotationsByType
 import com.google.devtools.ksp.getDeclaredProperties
 import com.google.devtools.ksp.processing.KSPLogger
 import com.google.devtools.ksp.processing.Resolver
@@ -20,7 +17,6 @@ internal class AutoBuilderClass private constructor(
     val name: String,
     val properties: ModelProperties,
     val annotations: ModelAnnotations,
-    val modelAnnotation: AutoBuilder,
     val className: ClassName,
     val defaultsClassName: ClassName,
     val defaultsMemberName: MemberName,
@@ -28,21 +24,23 @@ internal class AutoBuilderClass private constructor(
     val builderClassName: ClassName,
 ) {
     companion object {
-        context(Resolver, KSPLogger)
+        context(resolver: Resolver, logger: KSPLogger)
         fun from(symbol: KSClassDeclaration): AutoBuilderClass? {
             // Check if the interface has type parameters (generics)
             if (symbol.typeParameters.isNotEmpty()) {
-                error(AutoBuilderErrors.hasGenericType(symbol), symbol)
+                logger.error(AutoBuilderErrors.hasGenericType(symbol), symbol)
                 return null
             }
 
             // Check if the interface has properties.
-            val modelAnnotation = symbol.autoBuilderAnnotation
+            val annotation = symbol.findAnnotation("AutoBuilder") ?: return null
+            val inheritedProperties = annotation.getArgument("inheritedProperties") as? Boolean ?: false
+            val allowEmpty = annotation.getArgument("allowEmpty") as? Boolean ?: false
             val properties = symbol.getProperties(
-                useInherited = modelAnnotation.inheritedProperties,
+                useInherited = inheritedProperties,
             )
-            if (properties.none()) {
-                error(AutoBuilderErrors.emptyInterface(symbol), symbol)
+            if (properties.none() && !allowEmpty) {
+                logger.error(AutoBuilderErrors.emptyInterface(symbol), symbol)
                 return null
             }
 
@@ -59,7 +57,6 @@ internal class AutoBuilderClass private constructor(
                 name = name,
                 properties = properties,
                 annotations = symbol.kAnnotations,
-                modelAnnotation = modelAnnotation,
                 className = className,
                 defaultsClassName = defaultsClassName,
                 defaultsMemberName = defaultsMemberName,
@@ -73,10 +70,7 @@ internal class AutoBuilderClass private constructor(
 private val KSClassDeclaration.kAnnotations
     get() = annotations.toKAnnotations()
 
-private val KSClassDeclaration.autoBuilderAnnotation
-    get() = getAnnotationsByType(AutoBuilder::class).first()
-
-context(Resolver, KSPLogger)
+context(resolver: Resolver, logger: KSPLogger)
 private fun KSClassDeclaration.getProperties(useInherited: Boolean): ModelProperties {
     val properties = when {
         useInherited -> getAllProperties()

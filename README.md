@@ -25,12 +25,35 @@ For more information about the motivation behind this library, see [this article
 
 ## Setup
 
+### JVM / Android
+
 ```kotlin
 dependencies {
     implementation("io.github.izanrodrigo:autobuilder-annotations:${latest_version}")
     ksp("io.github.izanrodrigo:autobuilder-processor:${latest_version}")
 }
 ```
+
+### Kotlin Multiplatform
+
+```kotlin
+kotlin {
+    sourceSets {
+        commonMain.dependencies {
+            implementation("io.github.izanrodrigo:autobuilder-annotations:${latest_version}")
+        }
+    }
+}
+
+dependencies {
+    add("kspJvm", "io.github.izanrodrigo:autobuilder-processor:${latest_version}")
+    // Add for each target that needs generated builders:
+    // add("kspIosArm64", "io.github.izanrodrigo:autobuilder-processor:${latest_version}")
+    // add("kspIosSimulatorArm64", "io.github.izanrodrigo:autobuilder-processor:${latest_version}")
+}
+```
+
+> **Note:** The annotations are available on all Kotlin platforms. The processor (code generation) runs on JVM only, via KSP. In KMP projects, add the processor dependency for each target where you need generated builder code.
 
 ## Quick Start
 
@@ -83,6 +106,21 @@ In `Java` the `copy` method is not available, but we can create a new builder re
 ```java
 var userCopy = UserBuilder(user).setAge(40).build();
 ```
+
+### `@AutoBuilder(allowEmpty = true)`
+By default, `@AutoBuilder` requires the interface to define at least one property. If you need an empty marker interface (e.g., for forward compatibility), use `allowEmpty`:
+
+```kotlin
+@AutoBuilder(allowEmpty = true)
+interface EmptyConfig
+
+// Later in the code...
+
+val config = EmptyConfig {}
+val configCopy = config.copy {}
+```
+
+This generates a valid implementation with `equals`, `hashCode`, `toString`, `copy`, and the builder DSL — properties can be added later without breaking binary compatibility.
 
 ### `@DefaultValue`
 By default, the generated builder will generate default values for some basic types.

@@ -3,6 +3,7 @@
 package app.izantech.plugin.autobuilder.processor
 
 import app.izantech.plugin.autobuilder.processor.model.AutoBuilderClass
+import app.izantech.plugin.autobuilder.processor.model.AutoBuilderProperty
 import app.izantech.plugin.autobuilder.processor.model.ModelProperties
 import app.izantech.plugin.autobuilder.processor.util.*
 import com.google.devtools.ksp.processing.CodeGenerator
@@ -29,6 +30,7 @@ private val SuppressedWarnings = arrayOf(
 internal class ModelGenerator(
     private val resolver: Resolver,
     private val codeGenerator: CodeGenerator,
+    private val isJvm: Boolean,
 ) : KSDefaultVisitor<AutoBuilderClass, Unit>() {
     override fun defaultHandler(node: KSNode, data: AutoBuilderClass) = Unit
 
@@ -73,7 +75,7 @@ internal class ModelGenerator(
             .let {
                 val defaultValue = property.defaultValue
                 if (defaultValue == null || property.isLateinit) {
-                    it.hidden()
+                    it.hidden(isJvm)
                 } else {
                     it.initializer(defaultValue)
                         .addAnnotations(property.annotations)
@@ -125,40 +127,40 @@ internal class ModelGenerator(
         properties: ModelProperties,
         implClassName: ClassName,
     ) = with(resolver) {
-        val args = properties.joinToString(" &&\n\t") {
-            if (it.resolvedType.isArray) {
-                "this.${it.name}.contentEquals(other.${it.name})"
-            } else {
-                "this.${it.name} == other.${it.name}"
-            }
-        }
         FunSpec.builder("equals")
             .addModifiers(KModifier.OVERRIDE)
             .addParameter("other", ANY.copy(nullable = true))
             .returns(Boolean::class)
             .addStatement("if (this === other) return true")
-            .addStatement("if (javaClass != other?.javaClass) return false")
-            .addStatement("other as %T", implClassName)
-            .addStatement("return %L", args)
+            .addStatement("if (other !is %T) return false", implClassName)
+            .apply {
+                if (properties.isNotEmpty()) {
+                    val args = properties.joinToString(" &&\n\t") {
+                        if (it.resolvedType.isArray) {
+                            "this.${it.name}.contentEquals(other.${it.name})"
+                        } else {
+                            "this.${it.name} == other.${it.name}"
+                        }
+                    }
+                    addStatement("return %L", args)
+                } else {
+                    addStatement("return true")
+                }
+            }
             .build()
     }
 
     private fun generateImplementationHashCode(properties: ModelProperties): FunSpec = with(resolver) {
-        val javaHash = ClassName("java.util", "Objects").member("hash")
-
-        // Build the hash arguments, handling arrays specially
-        val hashArgs = properties.joinToString(",\n    ") { prop ->
-            when {
-                prop.resolvedType.isArray -> {
-                    // For arrays, use contentHashCode() to properly hash the contents
-                    if (prop.typeName.isNullable) {
-                        "${prop.name}?.contentHashCode() ?: 0"
-                    } else {
-                        "${prop.name}.contentHashCode()"
-                    }
+        fun hashExpression(prop: AutoBuilderProperty): String = when {
+            prop.resolvedType.isArray -> {
+                if (prop.typeName.isNullable) {
+                    "(${prop.name}?.contentHashCode() ?: 0)"
+                } else {
+                    "${prop.name}.contentHashCode()"
                 }
-                else -> prop.name
             }
+            prop.typeName.isNullable -> "(${prop.name}?.hashCode() ?: 0)"
+            else -> "${prop.name}.hashCode()"
         }
 
         return FunSpec.builder("hashCode")
@@ -168,7 +170,13 @@ internal class ModelGenerator(
                 if (properties.isEmpty()) {
                     addStatement("return 0")
                 } else {
-                    addStatement("return %M(\n    %L\n)", javaHash, hashArgs)
+                    val first = properties.first()
+                    val rest = properties.drop(1)
+                    addStatement("var result = %L", hashExpression(first))
+                    for (prop in rest) {
+                        addStatement("result = 31 * result + %L", hashExpression(prop))
+                    }
+                    addStatement("return result")
                 }
             }
             .build()
@@ -252,7 +260,7 @@ internal class ModelGenerator(
                             when {
                                 property.isLateinit -> {
                                     val errorMessage = AutoBuilderErrors.uninitializedLateinit(property.source)
-                                    add("%L = %L ?: throw UninitializedPropertyAccessException(%S),\n", property.name, property.name, errorMessage)
+                                    add("%L = %L ?: error(%S),\n", property.name, property.name, errorMessage)
                                 }
                                 else -> {
                                     add("%L = %L,\n", property.name, property.name)
@@ -275,7 +283,7 @@ internal class ModelGenerator(
                     addCode("  val cached = resolvedValues[name]\n")
                     addCode("  if (cached != null || resolvedValues.containsKey(name)) return cached as T\n")
                     addCode("  if (!resolving.add(name)) {\n")
-                    addStatement("    throw IllegalStateException(%P)", "Circular property default detected for \$name")
+                    addStatement("    error(%P)", "Circular property default detected for \$name")
                     addCode("  }\n")
                     addCode("  val value = computations.getValue(name)() as T\n")
                     addCode("  resolving.remove(name)\n")
@@ -291,7 +299,7 @@ internal class ModelGenerator(
                         val computation = when {
                             property.isLateinit -> {
                                 val errorMessage = AutoBuilderErrors.uninitializedLateinit(property.source)
-                                CodeBlock.of("%L ?: throw UninitializedPropertyAccessException(%S)", builderAccess, errorMessage)
+                                CodeBlock.of("%L ?: error(%S)", builderAccess, errorMessage)
                             }
                             property.hasCustomDefaultValue && builderIsNullable -> {
                                 val contextBlock = CodeBlock.builder().apply {
@@ -342,7 +350,7 @@ internal class ModelGenerator(
                                 }
                                 property.isLateinit -> {
                                     val errorMessage = AutoBuilderErrors.uninitializedLateinit(property.source)
-                                    add("%L = %L ?: throw UninitializedPropertyAccessException(%S),\n", property.name, builderProperty.name, errorMessage)
+                                    add("%L = %L ?: error(%S),\n", property.name, builderProperty.name, errorMessage)
                                 }
                                 else -> {
                                     add("%L = %L,\n", property.name, builderProperty.name)
@@ -397,7 +405,7 @@ internal class ModelGenerator(
                     it.initializer("source?.%L", property.name)
                 }
             }
-            .setter(FunSpec.setterBuilder().addAnnotation(JvmSynthetic::class).build())
+            .setter(FunSpec.setterBuilder().runIf(isJvm) { addAnnotation(JvmSynthetic::class) }.build())
             .addAnnotations(property.annotations)
             .build()
     }
@@ -435,7 +443,7 @@ internal class ModelGenerator(
 
         val initializerFunction = FunSpec.builder(name)
             .addKdoc("@see %T", className)
-            .addAnnotation(JvmSynthetic::class)
+            .runIf(isJvm) { addAnnotation(JvmSynthetic::class) }
             .addModifiers(KModifier.INLINE)
             .addParameter(initLambdaParameter)
             .returns(className)
@@ -449,7 +457,7 @@ internal class ModelGenerator(
         val copyFunction = FunSpec.builder("copy")
             .receiver(className)
             .addKdoc("@see %T", className)
-            .addAnnotation(JvmSynthetic::class)
+            .runIf(isJvm) { addAnnotation(JvmSynthetic::class) }
             .addModifiers(KModifier.INLINE)
             .addParameter(initLambdaParameter)
             .returns(className)

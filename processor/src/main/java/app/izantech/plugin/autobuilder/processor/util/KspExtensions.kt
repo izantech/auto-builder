@@ -1,9 +1,5 @@
-@file:OptIn(KspExperimental::class)
-
 package app.izantech.plugin.autobuilder.processor.util
 
-import com.google.devtools.ksp.KspExperimental
-import com.google.devtools.ksp.getAnnotationsByType
 import com.google.devtools.ksp.getClassDeclarationByName
 import com.google.devtools.ksp.processing.Resolver
 import com.google.devtools.ksp.symbol.KSAnnotated
@@ -13,21 +9,21 @@ import com.google.devtools.ksp.symbol.KSType
 import java.math.BigDecimal
 import java.math.BigInteger
 
-context(Resolver)
+context(resolver: Resolver)
 internal val KSType.isPrimitive
-    get() = this == builtIns.intType ||
-            this == builtIns.doubleType ||
-            this == builtIns.floatType ||
-            this == builtIns.longType ||
-            this == builtIns.shortType ||
-            this == builtIns.byteType ||
-            this == builtIns.charType ||
-            this == builtIns.booleanType
+    get() = this == resolver.builtIns.intType ||
+            this == resolver.builtIns.doubleType ||
+            this == resolver.builtIns.floatType ||
+            this == resolver.builtIns.longType ||
+            this == resolver.builtIns.shortType ||
+            this == resolver.builtIns.byteType ||
+            this == resolver.builtIns.charType ||
+            this == resolver.builtIns.booleanType
 
-context(Resolver)
+context(resolver: Resolver)
 internal val KSType.isArray: Boolean
     get() {
-        if (starProjection().isAssignableFrom(builtIns.arrayType)) {
+        if (starProjection().isAssignableFrom(resolver.builtIns.arrayType)) {
             return true
         }
 
@@ -44,29 +40,29 @@ internal val KSType.isArray: Boolean
     }
 
 
-context(Resolver)
+context(resolver: Resolver)
 internal val KSType.isString
-    get() = builtIns.stringType.isAssignableFrom(this)
+    get() = resolver.builtIns.stringType.isAssignableFrom(this)
 
-context(Resolver)
+context(resolver: Resolver)
 internal val KSType.canBeConst
     get() = isPrimitive || isString
 
-context(Resolver)
+context(resolver: Resolver)
 internal val KSType.defaultValueOrNull
     get() = when (val projection = starProjection()) {
-        builtIns.anyType -> "Any()"
-        builtIns.unitType -> "Unit"
-        builtIns.numberType, builtIns.byteType, builtIns.shortType, builtIns.intType -> "0"
-        builtIns.longType -> "0L"
-        builtIns.floatType -> "0f"
-        builtIns.doubleType -> "0.0"
-        builtIns.charType -> "'\u0000'"
-        builtIns.booleanType -> "false"
-        builtIns.stringType -> "\"\""
-        builtIns.arrayType -> "emptyArray()"
+        resolver.builtIns.anyType -> "Any()"
+        resolver.builtIns.unitType -> "Unit"
+        resolver.builtIns.numberType, resolver.builtIns.byteType, resolver.builtIns.shortType, resolver.builtIns.intType -> "0"
+        resolver.builtIns.longType -> "0L"
+        resolver.builtIns.floatType -> "0f"
+        resolver.builtIns.doubleType -> "0.0"
+        resolver.builtIns.charType -> "'\u0000'"
+        resolver.builtIns.booleanType -> "false"
+        resolver.builtIns.stringType -> "\"\""
+        resolver.builtIns.arrayType -> "emptyArray()"
         else -> when {
-            builtIns.arrayType.isAssignableFrom(projection) -> "emptyArray()"
+            resolver.builtIns.arrayType.isAssignableFrom(projection) -> "emptyArray()"
             projection.instanceOf<List<*>>() -> "emptyList()"
             projection.instanceOf<Set<*>>() -> "emptySet()"
             projection.instanceOf<Map<*, *>>() -> "emptyMap()"
@@ -87,21 +83,27 @@ internal val KSType.defaultValueOrNull
         }
     }
 
-context(Resolver)
+context(resolver: Resolver)
 internal fun KSType.instanceOf(name: String) =
-    instanceOf(getClassDeclarationByName(name))
+    instanceOf(resolver.getClassDeclarationByName(name))
 
-context(Resolver)
+context(resolver: Resolver)
 internal inline fun <reified T> KSType.instanceOf() =
-    instanceOf(getClassDeclarationByName<T>())
+    instanceOf(resolver.getClassDeclarationByName<T>())
 
-context(Resolver)
+context(resolver: Resolver)
 internal fun KSType.instanceOf(declaration: KSClassDeclaration?) =
     declaration?.asStarProjectedType()?.isAssignableFrom(this) == true
 
-context(Resolver)
+context(resolver: Resolver)
 internal inline fun <reified T> KSAnnotation.instanceOf() =
     annotationType.resolve().instanceOf<T>()
 
-inline fun <reified T : Annotation> KSAnnotated.annotationOrNull() =
-    getAnnotationsByType(T::class).firstOrNull()
+fun KSAnnotated.hasAnnotation(name: String): Boolean =
+    annotations.any { it.shortName.asString() == name }
+
+fun KSAnnotated.findAnnotation(name: String): KSAnnotation? =
+    annotations.firstOrNull { it.shortName.asString() == name }
+
+fun KSAnnotation.getArgument(name: String): Any? =
+    arguments.firstOrNull { it.name?.asString() == name }?.value

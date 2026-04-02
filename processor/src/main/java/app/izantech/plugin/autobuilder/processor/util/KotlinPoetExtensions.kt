@@ -43,11 +43,11 @@ internal fun hideFromKotlinAnnotation(): AnnotationSpec {
         .build()
 }
 
-internal fun PropertySpec.Builder.hidden() = this
+internal fun PropertySpec.Builder.hidden(isJvm: Boolean) = this
     .addAnnotation(hideFromKotlinAnnotation())
     .getter(
         FunSpec.getterBuilder()
-            .addAnnotation(JvmSynthetic::class)
+            .runIf(isJvm) { addAnnotation(JvmSynthetic::class) }
             .addStatement("return error(\"Hidden.\")")
             .build()
     )

@@ -1,21 +1,22 @@
 [versions]
 androidX-annotations = "1.9.1"
-compose = "2025.10.01"
+compose = "2026.03.01"
 gradle-versions = "0.53.0"
-kotlin = "2.2.21"
-kotlinpoet = "2.2.0"
-ksp = "2.3.0"
-maven-publish = "0.34.0"
+kotlin = "2.3.20"
+kotlinpoet = "2.3.0"
+ksp = "2.3.6"
+maven-publish = "0.36.0"
 
 # Testing
 test-assertj = "3.27.2"
 test-junit5 = "6.0.0"
-test-processors = "0.11.0"
+test-processors = "0.12.1"
 
 [plugins]
 gradle-versions = { id = "com.github.ben-manes.versions", version.ref = "gradle-versions" }
 google-ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
 maven-publish = { id = "com.vanniktech.maven.publish", version.ref = "maven-publish" }
 
 [libraries]

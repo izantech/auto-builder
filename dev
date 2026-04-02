@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GRADLEW="$ROOT_DIR/gradlew"
+
+DO_CLEAN="false"
+
+log() { printf '[dev] %s\n' "$*"; }
+die() { printf '[dev] ERROR: %s\n' "$*" >&2; exit 1; }
+
+gradle() { "$GRADLEW" "$@"; }
+
+usage() {
+  cat <<EOF
+Usage: dev <command> [options]
+
+Commands:
+  build     Build all modules (annotations KMP + processor + sample)
+  test      Run tests (optionally for a specific module)
+  publish   Publish artifacts to Maven local
+  deps      Check for dependency updates
+  clean     Clean build outputs
+  help      Show this help message
+
+Options:
+  --clean   Clean before building
+
+Examples:
+  dev build
+  dev build --clean
+  dev test
+  dev test :processor
+  dev publish
+  dev deps
+EOF
+}
+
+check_gradlew() {
+  [[ -x "$GRADLEW" ]] || die "Gradle wrapper not found or not executable: $GRADLEW"
+}
+
+cmd_build() {
+  check_gradlew
+  local tasks=()
+  [[ "$DO_CLEAN" == "true" ]] && tasks+=("clean")
+  tasks+=("build")
+  log "Building: ${tasks[*]}"
+  gradle "${tasks[@]}"
+}
+
+cmd_test() {
+  check_gradlew
+  local module="${1:-}"
+  if [[ -n "$module" ]]; then
+    log "Running tests for module: $module"
+    gradle "${module}:test"
+  else
+    log "Running all tests"
+    gradle :processor:test
+  fi
+}
+
+cmd_publish() {
+  check_gradlew
+  local tasks=()
+  [[ "$DO_CLEAN" == "true" ]] && tasks+=("clean")
+  tasks+=("publishToMavenLocal")
+  log "Publishing to Maven local: ${tasks[*]}"
+  gradle "${tasks[@]}"
+}
+
+cmd_deps() {
+  check_gradlew
+  log "Checking dependency updates"
+  gradle dependencyUpdates --no-parallel
+}
+
+cmd_clean() {
+  check_gradlew
+  log "Cleaning"
+  gradle clean
+}
+
+COMMAND=""
+MODULE_ARG=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    build|publish|deps|clean|help)
+      COMMAND="$1"
+      shift
+      ;;
+    test)
+      COMMAND="test"
+      shift
+      if [[ $# -gt 0 && "$1" != --* ]]; then
+        MODULE_ARG="$1"
+        shift
+      fi
+      ;;
+    --clean)
+      DO_CLEAN="true"
+      shift
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      die "Unknown argument: $1"
+      ;;
+  esac
+done
+
+case "$COMMAND" in
+  build)   cmd_build ;;
+  test)    cmd_test "$MODULE_ARG" ;;
+  publish) cmd_publish ;;
+  deps)    cmd_deps ;;
+  clean)   cmd_clean ;;
+  help)    usage ;;
+  "")      usage; exit 1 ;;
+  *)       die "Unknown command: $COMMAND" ;;
+esac
