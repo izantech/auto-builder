@@ -31,6 +31,7 @@ internal class ModelGenerator(
     private val resolver: Resolver,
     private val codeGenerator: CodeGenerator,
     private val isJvm: Boolean,
+    private val dslMarker: String? = null,
 ) : KSDefaultVisitor<AutoBuilderClass, Unit>() {
     override fun defaultHandler(node: KSNode, data: AutoBuilderClass) = Unit
 
@@ -220,6 +221,7 @@ internal class ModelGenerator(
         val builderProperties = generateBuilderProperties(properties, defaultsMemberName)
 
         TypeSpec.classBuilder(builderClassName)
+            .applyDslMarker()
             .primaryConstructor(
                 FunSpec.constructorBuilder()
                     .addModifiers(KModifier.INTERNAL)
@@ -429,6 +431,15 @@ internal class ModelGenerator(
         }
     }
     // endregion
+
+    private fun TypeSpec.Builder.applyDslMarker() = apply {
+        if (dslMarker != null) {
+            val lastDot = dslMarker.lastIndexOf('.')
+            if (lastDot > 0) {
+                addAnnotation(ClassName(dslMarker.substring(0, lastDot), dslMarker.substring(lastDot + 1)))
+            }
+        }
+    }
 
     // region Model extensions
     private fun generateModelExtensions(

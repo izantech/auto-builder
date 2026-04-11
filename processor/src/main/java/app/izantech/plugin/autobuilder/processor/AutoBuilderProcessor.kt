@@ -17,7 +17,8 @@ class AutoBuilderProcessor(private val environment: SymbolProcessorEnvironment) 
                 .partition(KSClassDeclaration::validate)
 
             val isJvm = environment.platforms.any { it.platformName == "JVM" }
-            val modelGenerator = ModelGenerator(resolver, environment.codeGenerator, isJvm)
+            val dslMarker = environment.options["autobuilder.dslMarker"]
+            val modelGenerator = ModelGenerator(resolver, environment.codeGenerator, isJvm, dslMarker)
             validatedSymbols.forEach { symbol ->
                 val autoBuilderClass = AutoBuilderClass.from(symbol)
                 if (autoBuilderClass != null) {
